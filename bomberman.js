@@ -402,7 +402,7 @@ app.get('/', function(req, res){
 });
 
 app.get('/game', function(req,res){
-    res.sendFile(__dirname + '/test.html');
+    res.sendFile(__dirname + '/client-game.html');
 })
 
 io.on('connection', function(socket){
