@@ -1,0 +1,34 @@
+html{ height:100%; }
+body{ height:100%; }
+
+.menu_top{ height:40px;}
+.menu_top .col { margin-top:8px;}
+
+.menu_left{ background-color:red; min-width:300px;}
+.menu_left_text { margin-top:50px; }
+.menu_left_text a { color:white; }
+.menu_left_text a:hover{ text-decoration:none; }
+
+.content{ height: calc(100% - 40px);}
+
+.content_right{ background-image:url("castle.png"); background-size:cover; padding:0; overflow:hidden;}
+
+
+#buildings{ background-color:white; height:700px; width:1000px;}
+#buildings{
+    display:none;
+    position: absolute;
+    z-index: 9;
+    background-color: #f1f1f1;
+    border: 1px solid #d3d3d3;
+}
+#buildingsheader {
+    padding: 10px;
+    cursor: move;
+    z-index: 10;
+    background-color: #2196F3;
+    color: #fff;
+}
+#buildings_table{width:100%;}
+
+.btn_close{ cursor:hand !important; }

@@ -1,0 +1,143 @@
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    //CONNECT
+    var socket = io();
+    var inLobby = false;
+    var ping0;
+    var ping = 0;
+    var ping1;
+    //GAME VARIABLES
+    var gameRunning = false;
+    //COOKIE FUNCTION
+    function getCookie(cname) {
+        var name = cname + "=";
+        var decodedCookie = decodeURIComponent(document.cookie);
+        var ca = decodedCookie.split(';');
+        for(var i = 0; i <ca.length; i++) {
+            var c = ca[i];
+            while (c.charAt(0) == ' ') {
+                c = c.substring(1);
+            }
+            if (c.indexOf(name) == 0) {
+                return c.substring(name.length, c.length);
+            }
+        }
+        return "";
+    }
+    function setCookie(cname, cvalue, exdays) {
+        var d = new Date();
+        d.setTime(d.getTime() + (exdays*24*60*60*1000));
+        var expires = "expires="+ d.toUTCString();
+        document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/";
+    }
+
+    //MESSAGE PROCESSING
+    socket.on('message', function (message) {
+        console.log(message);
+        var split = message.split("#");
+        switch(split[0].toLowerCase()){
+            case "newplayer":
+                var table = document.getElementById("lobbytable");
+                var row = table.insertRow(1);
+                var cell1 = row.insertCell(0);
+                var cell2 = row.insertCell(1);
+                var cell3 = row.insertCell(2);
+                cell1.innerHTML = split[1];
+                cell2.innerHTML = "0";
+                cell3.innerHTML = "0";
+            break;
+            case "playerleft":
+                var name = split[1];
+                var table = document.getElementById("lobbytable");
+                for(i=0;i<table.rows.length;i++){
+                    if(table.rows[i].cells[0].innerHTML == name){
+                        table.deleteRow(i);
+                        break;
+                    }
+                }
+            break;
+            case "pingback":
+                ping1 =performance.now();
+                ping = (ping1 - ping0).toFixed(2);
+                socket.send("spreadping#" + username + "#" + ping);
+                var table = document.getElementById("lobbytable");
+                for(i=1;i<table.rows.length;i++){
+                    if(table.rows[i].cells[0].innerHTML == username){
+                        table.rows[i].cells[1].innerHTML = ping;
+                    }
+                }
+            break;
+            case "spreadping":
+                var name = split[1];
+                var table = document.getElementById("lobbytable");
+                for(i=0;i<table.rows.length;i++){
+                    if(table.rows[i].cells[0].innerHTML == name){
+                        table.rows[i].cells[1].innerHTML = split[2];
+                        break;
+                    }
+                }
+            break;
+            case "fehler":
+                alert(split[1]);
+            break;
+            case "opengame":
+                window.location.replace("/game");
+            break;
+            case "nameinuse":
+                inLobby=false;
+                username = prompt("name vergeben. wie willst du heissen", "opfer");
+                setCookie("username",username,1);
+                joinLobby();
+            break;
+        }
+    });
+
+    //USERNAME SECTION
+    var username = getCookie("username");
+    if(username.length == 0){
+        username = prompt("wie willst du heissen", "opfer");
+        setCookie("username",username,1);
+    }
+
+    //JOIN LOBBY FUNCTION
+    function joinLobby(){
+            if(!inLobby){
+            socket.send("join#" + username);
+            inLobby= true;
+        }
+    }
+    function quitLobby(){
+        inLobby=false;
+        socket.send("quit");
+        var table = document.getElementById("lobbytable");
+            for(i=0;i<table.rows.length;i++){
+                    table.deleteRow(1);
+             }
+    }
+    
+    //PING function
+    setInterval(function(){retrievePing();},1000);
+    function retrievePing(){
+        if(inLobby){
+            ping0 = performance.now();
+            socket.send("ping");
+        }
+    }
+    
+    //START GAME
+    function startGame(){
+        if(!inLobby){
+            alert("Du musst in einer Lobby sein amk");
+            return 0;
+        }
+        socket.send("start");
+    }
+    
+</script>
+
+<button onclick="joinLobby()">Beitreten</button> <button onclick="quitLobby()">Leaven</button> <button onclick="startGame()">Spiel starten</button>
+<table id="lobbytable">
+    <tr>
+        <th>Spieler</th><th>Ping</th><th>Siege</th>
+    </tr>
+</table>

@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="favicon.ico">
+</head>
+<body>
+
+<canvas id="myCanvas" width="1088" height="704" style="border:1px solid #d3d3d3;float:left">
+Your browser does not support the HTML5 canvas tag.</canvas>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+
+//COOKIE
+function getCookie(cname) {
+    var name = cname + "=";
+    var decodedCookie = decodeURIComponent(document.cookie);
+    var ca = decodedCookie.split(';');
+    for(var i = 0; i <ca.length; i++) {
+        var c = ca[i];
+        while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+        }
+        if (c.indexOf(name) == 0) {
+            return c.substring(name.length, c.length);
+        }
+    }
+    return "";
+}
+//CONNECT
+var socket = io();
+
+//GAMEID is required
+var username =getCookie("username");
+if(username.length==0){
+    alert("Du bist nicht in einem game");
+    window.location.replace('/');
+}
+socket.send("gameid#" + username);
+
+//UPDATE SOCKET
+socket.send("updatesocket#" + username);
+
+// CANVAS
+var c = document.getElementById("myCanvas");
+var ctx = c.getContext("2d");
+var sprite = new Image();
+var stone = new Image();
+var bombsprites = new Image();
+var bomb = new Image();
+var pu_bomb = new Image();
+var pu_range = new Image();
+var pu_ghost = new Image();
+
+//STATIC VARIABLES
+sprite.src = 'sprite.png';
+stone.src = 'stones.png';
+bomb.src = 'bomb.png';
+bombsprites.src = 'bombsprites.png';
+pu_bomb.src = 'pu_bomb.png';
+pu_range.src = 'pu_range.png';
+pu_ghost.src = 'pu_ghost.png';
+setInterval(function(){render();},17);
+
+//MOVEMENT VARIABLES
+var movement_speed = 2;
+var direction = "STAND";
+var sprite_cooldown = 5;
+var ghost = 0;
+var ghost_duration = 5000;
+
+//SPRITE VARIABLES
+var ctop = 0;
+var cleft = 0;
+var sprite_size = 64;
+var sprite_count = 4;
+var cur_sprite = 0;
+var sprite_up = 3;
+var sprite_down = 0;
+var sprite_left = 1;
+var sprite_right = 2;
+var sprite_direction = 0;
+var cooldown = 0;
+var spawned = false;
+
+//CHARACTER WALKING HITBOX
+var hitbox_show = false;
+var hitbox_width = 25;
+var hitbox_height = 39;
+var hitbox_top = 13;
+var hitbox_left = 20;
+
+//COOLDOWNS
+var sprite_cooldown = 5;
+var max_bomb_cooldown = 10;
+var cur_bomb_cooldown = 0;
+var max_bombs = 2;
+var cur_bombs = 0;
+
+//EXPLOSION SPRITE SHEET
+var expl_sprite_count = 6;
+var expl_sprite_rows = 7;
+var expl_sprite_total = 39;
+var expl_sprite_width = 64;
+var expl_sprite_height = 60;
+
+//POWERUPS
+function Powerup(block,type){
+    this.block = block;
+    this.type = type;
+    this.pickedup = false;
+}
+var powerups = new Array();
+
+//SET COOKIE
+function setCookie(cname, cvalue, exdays) {
+        var d = new Date();
+        d.setTime(d.getTime() + (exdays*24*60*60*1000));
+        var expires = "expires="+ d.toUTCString();
+        document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/";
+}
+
+//MESSAGE RECEIVED
+socket.on('message', function(message){
+    processMessage(message);
+})
+
+//OTHER PLAYERS
+function otherPlayer(left,top,name){
+    this.left = left;
+    this.top = top;
+    this.name = name;
+    this.direction = 0;
+    this.cur_sprite = 0;
+}
+var otherplayers = new Array();
+
+//EXPLOSIONS
+function Explosion(row,num){
+    this.original_block;
+    this.blocks = new Array();
+    this.sprite_row = row;
+    this.sprite_num = num;
+}
+var explosions = new Array();
+
+//PROCESS SERVER MESSAGES
+function processMessage(message){
+    var split = message.split("#");
+    switch(split[0]){
+        case "gameid":
+            gameid = split[1];
+            setTimeout(function(){socket.send("spawn#" + gameid + "#" + username);},2000);
+        break;
+        case "fehler":
+            alert(split[1]);
+            window.location.replace('/');
+        break;
+        case "spawn":
+            console.log(message);
+            cleft = split[1];
+            ctop = split[2];
+            spawned = true;
+        break;
+        case "position":
+            if(split[1] != username){
+                var found = false;
+                for(i=0;i<otherplayers.length;i++){
+                    if(otherplayers[i].name == split[1]){
+                        otherplayers[i].left = split[2];
+                        otherplayers[i].top = split[3];
+                        otherplayers[i].direction = split[4];
+                        otherplayers[i].cur_sprite = split[5];
+                        found=true;
+                        break;
+                    }
+                }
+                if(!found){
+                    var newOtherPlayer = new otherPlayer(split[2], split[3], split[1]);
+                    otherplayers.push(newOtherPlayer);
+                }
+            }
+        break;
+        case "bomb":
+            map_tiles[split[1]] = "BOMB";
+        break;
+        case "good":
+            //find possible explosions with this origin and delete them
+            for(e=0;e<explosions.length;e++){
+                if(explosions[e].original_block == split[1]){
+                    for(b=0;b<explosions[e].blocks.length;b++){
+                        socket.send("destroyed#" + gameid + "#" + explosions[e].blocks[b]);
+                        map_tiles[explosions[e].blocks[b]] = "GOOD";
+                    }
+                    explosions.splice(e,1);
+                    break;
+                }
+            }
+        break;
+        case "powerup":
+            var pu_block = split[1];
+            var pu_powerup = split[2];
+            var pu = new Powerup(pu_block,pu_powerup);
+            powerups.push(pu);
+        break;
+        case "explosion":
+            var e_block = split[1];
+            var e_sprite = split[2];
+            var e_range = split[3];
+            //Get the row of the sprite
+            var p_row = 0;
+            var p_count = 0;
+            while(p_count + expl_sprite_count < e_sprite){
+                p_count += expl_sprite_count;
+                p_row++;
+            }
+            //Get the sprite number
+            var p_num = e_sprite - (p_row * expl_sprite_count);
+            //calculate all blocks that are being hit
+            //calculate block row
+            var block_row = 0;
+            var block_count = 0;
+            while(block_count+game_width-1 < e_block){
+                block_count += game_width;
+                block_row++;
+            }
+            //calculate block num
+            var block_num = e_block - (block_row * game_width);
+            var blocks_hit = new Array();
+            //First add the original block
+            blocks_hit.push(e_block);
+            //Now check to the left if there is space
+            var range_count = 0;
+            while(range_count < e_range){
+                if(block_num - range_count - 1>= 0){
+                    if(map_tiles[parseFloat(e_block)-range_count-1] != "BLOCKED"){
+                        blocks_hit.push(parseFloat(e_block)-range_count-1);
+                        range_count++;
+                    }else{
+                        range_count = e_range;
+                    }
+                    
+                }else{
+                    range_count = e_range;
+                }
+            }
+            //Now check to the right
+            range_count = 0;
+            while(range_count < e_range){
+                if(block_num + range_count + 1 < game_width){
+                    if(map_tiles[parseFloat(e_block) + range_count +1] != "BLOCKED"){
+                        blocks_hit.push(parseFloat(e_block) + range_count +1);
+                        range_count++;
+                    }else{
+                        range_count = e_range;
+                    }
+                }else{
+                    range_count = e_range;
+                }
+            }
+            //Now check to the top
+            range_count = 0;
+            while(range_count < e_range){
+                if(block_row - range_count - 1 >= 0){
+                    if(map_tiles[parseFloat(e_block) - ( game_width * (range_count+1) )] != "BLOCKED"){
+                        blocks_hit.push(parseFloat(e_block) - ( game_width * (range_count+1) ));
+                        range_count++;
+                    }else{
+                        range_count = e_range;
+                    }
+                }else{
+                    range_count = e_range;
+                }
+            }
+            //Check to the bottom
+            range_count = 0;
+            while(range_count < e_range){
+                if(block_row + range_count + 1 < game_height){
+                    if(map_tiles[parseFloat(e_block) + (range_count+1) * game_width] != "BLOCKED"){
+                        blocks_hit.push(parseFloat(e_block) + (range_count+1) * game_width);
+                        range_count++;
+                    }else{
+                        range_count = e_range;
+                    }
+                }else{
+                    range_count = e_range;
+                }
+            }
+            //check for double destroyable elements
+            //TODO
+            //generate the explosion
+            var found = false;
+            for(e=0;e<explosions.length;e++){
+                if(explosions[e].original_block == e_block){
+                    found = true;
+                    explosions[e].blocks = blocks_hit;
+                    explosions[e].sprite_row = p_row;
+                    explosions[e].sprite_num = p_num;
+                    break;
+                }
+            }
+            if(!found){
+                var e = new Explosion(p_row,p_num);
+                e.original_block = e_block;
+                e.blocks = blocks_hit;
+                explosions.push(e);
+            }
+            //render the explosion
+            for(b=0;b<blocks_hit.length;b++){
+                map_tiles[blocks_hit[b]] = "EXPLOSION";
+            }
+        break;
+        case "dead":
+            for(p=0;p<otherplayers.length;p++){
+                if(otherplayers[p].name == split[1]){
+                    otherplayers.splice(p,1);
+                    break;
+                }
+            }
+        break;
+        case "log":
+            console.log(split[1]);
+        break;
+        case "pickedup":
+            for(p=0;p<powerups.length;p++){
+                if(powerups[p].block == split[1]){
+                    powerups.splice(p,1);
+                    break;
+                }
+            }
+        break;
+    }
+}
+
+//RENDER
+function render(){
+    ctx.clearRect(0,0,1088,704);
+    //RENDER MAP
+    var p_row = 0;
+    var p_count = 0;
+    for(i=0;i<map_tiles.length;i++){
+        switch(map_tiles[i]){
+            case "BLOCKED": 
+                ctx.beginPath();
+                ctx.rect( (i - p_row * game_width) * game_tile_width, p_row * game_tile_width, game_tile_width, game_tile_width);
+                ctx.fillStyle = "gray";
+                ctx.fill();
+            break;
+            case "GOOD": 
+                ctx.beginPath();
+                ctx.rect( (i - p_row * game_width) * game_tile_width, p_row * game_tile_width, game_tile_width, game_tile_width);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+            break;
+            case "DESTROYABLE":
+                ctx.beginPath();
+                ctx.rect( (i - p_row * game_width) * game_tile_width, p_row * game_tile_width, game_tile_width, game_tile_width);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+                ctx.drawImage(stone, (i - p_row * game_width) * game_tile_width + 8, p_row * game_tile_width + 15);
+            break;
+            case "BOMB":
+                ctx.beginPath();
+                ctx.rect( (i - p_row * game_width) * game_tile_width, p_row * game_tile_width, game_tile_width, game_tile_width);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+                ctx.drawImage(bomb, (i - p_row * game_width) * game_tile_width + 8, p_row * game_tile_width + 15);
+            break;
+            case "EXPLOSION":
+                ctx.beginPath();
+                ctx.rect( (i - p_row * game_width) * game_tile_width, p_row * game_tile_width, game_tile_width, game_tile_width);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+                var p_explosion;
+                var found = false;
+                for(e=0;e<explosions.length;e++){
+                    for(bh=0;bh<explosions[e].blocks.length;bh++){
+                        if(explosions[e].blocks[bh] == i){
+                            p_explosion = e;
+                            found=true;
+                        }
+                    }
+                }
+                if(found){
+                    ctx.drawImage(bombsprites,explosions[p_explosion].sprite_num * expl_sprite_width, explosions[p_explosion].sprite_row * expl_sprite_height, expl_sprite_width,expl_sprite_height, (i - p_row * game_width) * game_tile_width + 8, p_row * game_tile_width, expl_sprite_width, expl_sprite_height);
+                }else{
+                    console.log("not found");
+                }
+                break;
+        }
+        p_count++;
+        if(p_count == game_width){
+            p_count = 0;
+            p_row++;
+        }
+    }
+        //RENDER POWERUPS
+        for(p=0;p<powerups.length;p++){
+                var powerup_row = 0;
+                var powerup_num = 0;
+                while(powerup_num + game_width - 1 < powerups[p].block){
+                    powerup_num += game_width;
+                    powerup_row++;
+                }
+                powerup_num = powerups[p].block - powerup_row * game_width;
+                ctx.beginPath();
+                ctx.rect( (i - p_row * game_width) * game_tile_width, p_row * game_tile_width, game_tile_width, game_tile_width);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+                switch(powerups[p].type.toLowerCase()){
+                    case "bombplus":
+                        ctx.drawImage(pu_bomb, powerup_num * game_tile_width + 25, powerup_row * game_tile_width + 25);
+                    break;
+                    case "rangeplus":
+                        ctx.drawImage(pu_range, powerup_num * game_tile_width + 25, powerup_row * game_tile_width + 25);
+                    break;
+                    case "ghost":
+                        ctx.drawImage(pu_ghost, powerup_num * game_tile_width + 25, powerup_row * game_tile_width + 25);
+                    break;
+                }
+                
+        }
+
+        //RENDER PLAYER
+        ctx.drawImage(sprite,cur_sprite * sprite_size,sprite_direction * sprite_size,64,64,cleft,ctop,64,64);
+        ctx.font = "15px Arial";
+        ctx.fillStyle = "red";
+        ctx.fillText("Du",cleft + 22,ctop);
+        if(direction != "STAND"){
+            if(cooldown == sprite_cooldown){
+                if(cur_sprite<(sprite_count-1)){
+                    cur_sprite ++ ;
+                }else{
+                    cur_sprite = 0;
+                }
+                cooldown = 0; 
+            }else{
+                cooldown ++;
+            }
+        }
+    
+        //RENDER HITBOX
+        if(hitbox_show){
+            ctx.beginPath();
+            ctx.rect(cleft + hitbox_left,ctop + hitbox_top, hitbox_width, hitbox_height);
+            ctx.fillStyle = "green";
+            ctx.fill();
+        }
+        //RENDER OTHER PLAYERS
+        for(i=0;i<otherplayers.length;i++){
+            ctx.drawImage(sprite,otherplayers[i].cur_sprite * sprite_size,otherplayers[i].direction * sprite_size,64,64,otherplayers[i].left,otherplayers[i].top,64,64);
+            ctx.font = "15px Arial";
+            ctx.fillStyle = "red";
+            ctx.strokeText(otherplayers[i].name,( parseFloat(otherplayers[i].left) + 12 ),otherplayers[i].top);
+        }
+
+    
+}
+
+
+//GAME VARIABLES
+var game_tile_width = 64;
+var game_width = 17;
+var game_height = 11;
+
+//GAME OBJECTS
+var map_tiles = new Array(game_width * game_height);
+
+//FILL WITH OBJECTS
+var fill = [1,1,3,3,3,1,3,1,1,3,3,3,3,3,1,1,1,
+            1,2,3,2,3,2,3,2,1,2,1,2,3,2,1,2,1,
+            3,1,3,3,3,3,3,3,1,3,1,3,3,3,1,3,3,
+            3,2,3,2,3,2,3,2,1,2,3,2,3,2,3,2,3,
+            3,3,3,3,1,1,3,3,3,1,3,3,1,3,3,1,3,
+            1,2,3,2,3,2,3,2,3,2,3,2,1,2,3,2,1,
+            3,1,1,3,1,3,1,3,1,3,3,3,3,3,3,3,3,
+            3,2,3,2,3,2,1,2,3,2,3,2,3,2,3,2,3,
+            1,3,1,1,1,3,3,1,3,3,3,3,1,1,3,3,3,
+            1,2,3,2,3,2,3,2,3,2,1,2,3,2,1,2,1,
+            1,1,1,3,3,1,3,3,1,3,3,3,1,1,3,1,1
+];
+for(i=0;i<map_tiles.length;i++){
+    switch(fill[i]){
+        case 1:
+            map_tiles[i] = "GOOD";
+        break;
+        case 2:
+            map_tiles[i] = "BLOCKED";
+        break;
+        case 3:
+            map_tiles[i] = "DESTROYABLE";
+        break;
+    }
+}
+
+//LISTENERS
+document.addEventListener("keydown",function(event){
+    switch(event.code){
+        case "KeyS":
+            direction = "DOWN";
+        break;
+        case "KeyW":
+            direction = "UP";
+        break;
+        case "KeyA":
+            direction = "LEFT"
+        break;
+        case "KeyD": 
+            direction = "RIGHT"
+        break;
+        case "Space":
+            placeBomb();
+        break;
+    }
+})
+document.addEventListener("keyup",function(event){
+    switch(event.code){
+        case "KeyS":
+            if(direction == "DOWN"){
+                direction = "STAND";
+            }
+        break;
+        case "KeyW":
+            if(direction == "UP"){
+                direction = "STAND";
+            }
+        break;
+        case "KeyA":
+            if(direction == "LEFT"){
+                direction = "STAND";
+            }
+        break;
+        case "KeyD":
+            if(direction == "RIGHT"){
+                direction = "STAND";
+            }
+        break;
+    }
+})
+
+//MOVEMENT
+function move(){
+    ctop = parseInt(ctop);
+    cleft = parseInt(cleft);
+    movement_speed= parseInt(movement_speed);
+    switch(direction){
+        case "DOWN":
+            if(allowedBoundryCollision(cleft,ctop + movement_speed)){
+                if(allowedBlockCollision(cleft, ctop + movement_speed)){ 
+                    ctop = ctop + movement_speed;
+                    sprite_direction = sprite_down;
+                }
+            }
+        break;
+        case "UP": 
+            if(allowedBoundryCollision(cleft,ctop - movement_speed)){ 
+                if(allowedBlockCollision(cleft, ctop - movement_speed)){
+                    ctop = ctop - movement_speed;
+                    sprite_direction = sprite_up;
+                }
+            }
+        break;
+        case "LEFT": 
+            if(allowedBoundryCollision(cleft - movement_speed,ctop)){ 
+                if(allowedBlockCollision(cleft - movement_speed, ctop)){
+                    cleft = cleft - movement_speed ;
+                    sprite_direction = sprite_left;
+                }
+            }
+        break;
+        case "RIGHT": 
+            if(allowedBoundryCollision(cleft + movement_speed,ctop)){ 
+                if(allowedBlockCollision(cleft + movement_speed, ctop)){
+                    cleft = cleft + movement_speed;
+                    sprite_direction = sprite_right;
+                }
+            }
+        break;
+    }
+    if(spawned){
+        socket.send("position#" + gameid + "#" + username + "#" + cleft + "#" + ctop + "#" + sprite_direction + "#" + cur_sprite);
+    }
+}
+setInterval(function(){move();},10);
+
+//BOUNDRY COLLISION
+function allowedBoundryCollision(p_left, p_top){
+    if(p_left < 0) return false;
+    if(p_left + sprite_size > 1088) return false;
+    if(p_top < 0) return false;
+    if(p_top + sprite_size > 704) return false;
+    return true;
+}
+
+//BOMB COLLISION
+function bombCollision(){
+    var p_left = cleft;
+    var p_top = ctop;
+    var p_row = 0;
+    var p_count = 0;
+    for(i=0;i<map_tiles.length;i++){
+        //Get X of block
+        var block_x = (i - p_row * game_width) * game_tile_width;
+        //Get Y of block
+        var block_y = p_row * game_tile_width;
+        var rect1 = {x: block_x, y: block_y, width: game_tile_width, height: game_tile_width};
+        //Get hitbox
+        var newH = parseFloat(p_top) + parseFloat(hitbox_top);
+        var rect2 = {x: p_left + hitbox_left, y: newH, width: hitbox_width, height: hitbox_height};
+        if(!rectangleCollision(rect1,rect2)){
+            if(map_tiles[i] == "EXPLOSION"){
+                  return false;
+            }
+        }
+        //Get next block
+        p_count++;
+        if(p_count == game_width){
+            p_count = 0;
+            p_row++;
+        }
+        
+    }
+    return true;
+}
+function bombCollisionTimer(){
+    if(!bombCollision()){
+        //despawn
+        socket.send("dead#" + gameid + "#" + username);
+    }
+}
+setInterval(function(){bombCollisionTimer();},10);
+//BLOCK COLLISION
+function allowedBlockCollision(p_left, p_top){
+    if(ghost == 1){
+        return true;
+    }
+    var p_row = 0;
+    var p_count = 0;
+    for(i=0;i<map_tiles.length;i++){
+        //Get X of block
+        var block_x = (i - p_row * game_width) * game_tile_width;
+        //Get Y of block
+        var block_y = p_row * game_tile_width;
+        var rect1 = {x: block_x, y: block_y, width: game_tile_width, height: game_tile_width};
+        //Get hitbox
+        var newH = parseFloat(p_top) + parseFloat(hitbox_top);
+        var rect2 = {x: p_left + hitbox_left, y: newH, width: hitbox_width, height: hitbox_height};
+        if(!rectangleCollision(rect1,rect2)){
+            if(map_tiles[i] == "BLOCKED" || map_tiles[i] == "DESTROYABLE"){
+                  return false;
+            }
+        }
+        //Get next block
+        p_count++;
+        if(p_count == game_width){
+            p_count = 0;
+            p_row++;
+        }
+        
+    }
+    return true;
+}
+
+function rectangleCollision(rect1,rect2){
+    if (rect1.x < rect2.x + rect2.width &&
+    rect1.x + rect1.width > rect2.x &&
+    rect1.y < rect2.y + rect2.height &&
+    rect1.height + rect1.y > rect2.y) {  
+        // collision detected!
+        return false;
+    }
+    return true;
+}
+
+//POWERUP TIMER
+function powerUpTimer(){
+    var block = getCurrentBlock();
+    for(p=0;p<powerups.length;p++){
+                if(powerups[p].block == block){
+                    //PICK UP THE POWERUP
+                    if(!powerups[p].pickedup){
+                    powerups[p].pickedup=true;
+                    pickUpPowerup(p);
+                    }
+                }
+            }
+}
+setInterval(function(){powerUpTimer();},10);
+
+//PICK UP POWERUP
+function pickUpPowerup(p){
+    console.log("powerup picked up");
+    var powerup = powerups[p];
+    switch(powerup.type.toLowerCase()){
+        case "bombplus":
+            max_bombs++;
+            console.log("new mb " + max_bombs);
+        break;
+        case "rangeplus":
+            socket.send("addrange#" + gameid + "#" + username);
+        break;
+        case "ghost":
+            ghost = 1;
+            setTimeout(function(){ghostTimer();}, ghost_duration);
+        break;
+    }
+    socket.send("pickedup#" + gameid + "#" + powerup.block);
+}
+
+//GHOST DURATION TIMER
+function ghostTimer(){
+    ghost = 0;
+    if(allowedBlockCollision(cleft,ctop)){
+        
+    }else{
+        ghost = 1;
+        setTimeout(function(){ghostTimer();},10);
+    }
+}
+
+//GET CURRENT BLOCK
+function getCurrentBlock(){
+    var p_left = cleft;
+    var p_top = ctop;
+    var p_row = 0;
+    var p_count = 0;
+    for(i=0;i<map_tiles.length;i++){
+        //Get X of block
+        var block_x = (i - p_row * game_width) * game_tile_width;
+        //Get Y of block
+        var block_y = p_row * game_tile_width;
+        var rect1 = {x: block_x, y: block_y, width: game_tile_width, height: game_tile_width};
+        //Get hitbox
+        var newH = parseFloat(p_top) + parseFloat(hitbox_top);
+        var rect2 = {x: p_left + hitbox_left, y: newH, width: hitbox_width, height: hitbox_height};
+        //Get center point of hitbox
+        var center_x = (rect2.x) + (rect2.width / 2);
+        var center_y = (rect2.y) + (rect2.height) / 2;
+        //Check if center point is inside of current block
+        if(center_x >= rect1.x && center_x < (rect1.x + rect1.width)){
+            if(center_y >= rect1.y && center_y < (rect1.y + rect1.height)){
+                return i;
+            }
+        }
+        //Get next block
+        p_count++;
+        if(p_count == game_width){
+            p_count = 0;
+            p_row++;
+        }
+        
+    }
+    return 1;
+}
+
+//PLACE BOMB
+function placeBomb(){
+    if(spawned){
+            if(cur_bombs != max_bombs){
+                socket.send("bomb#" + gameid + "#" + getCurrentBlock() + "#" + username);
+                cur_bombs++;
+                setTimeout(function(){cur_bombs--;},4000);
+            }
+    }
+}
+
+
+
+</script> 
+</body>
+</html>
